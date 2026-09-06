@@ -1,5 +1,6 @@
 import os
 from decimal import Decimal
+from datetime import datetime, timezone
 
 from telegram import (
     Update,
@@ -25,27 +26,22 @@ from supabase import create_client
 TOKEN = os.getenv("BOT_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+ADMIN_ID = os.getenv("ADMIN_ID")
 
 PORT = int(os.getenv("PORT", "10000"))
 
-# Admin numeric Telegram ID.
-# Add this to Render Environment Variables as ADMIN_ID.
-ADMIN_ID = os.getenv("ADMIN_ID")
-
 SUPPORT_USERNAME = "@AmanM_12"
 
-# Fixed exchange rate
 USDT_TO_ETB = Decimal("185")
 
-# Referral reward
 REFERRAL_REWARD_USDT = Decimal("0.015")
-REFERRAL_REWARD_ETB = REFERRAL_REWARD_USDT * USDT_TO_ETB
+REFERRAL_REWARD_ETB = (
+    REFERRAL_REWARD_USDT * USDT_TO_ETB
+)
 
-# Withdrawal minimums
 FIRST_MIN_WITHDRAW_USDT = Decimal("0.12")
 LATER_MIN_WITHDRAW_USDT = Decimal("0.50")
 
-# Mandatory channels
 REQUIRED_CHANNELS = [
     "@Sheger_tech1",
     "@EthioVortex1",
@@ -55,14 +51,23 @@ REQUIRED_CHANNELS = [
 
 
 # =========================================================
-# SUPABASE
+# CHECK CONFIG
 # =========================================================
 
 if not TOKEN:
-    raise ValueError("BOT_TOKEN environment variable is not set.")
+    raise ValueError(
+        "BOT_TOKEN environment variable is not set."
+    )
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    raise ValueError("Supabase environment variables are not set.")
+    raise ValueError(
+        "Supabase environment variables are not set."
+    )
+
+
+# =========================================================
+# SUPABASE
+# =========================================================
 
 supabase = create_client(
     SUPABASE_URL,
@@ -127,12 +132,8 @@ def create_user(
         "bank_account": "",
         "last_withdrawal_method": "",
         "is_verified": False,
+        "referred_by": referred_by,
     }
-
-    if referred_by:
-        data["referred_by"] = referred_by
-    else:
-        data["referred_by"] = None
 
     result = (
         supabase
@@ -147,7 +148,10 @@ def create_user(
     return None
 
 
-def update_user(telegram_id: int, data: dict):
+def update_user(
+    telegram_id: int,
+    data: dict,
+):
     return (
         supabase
         .table("users")
@@ -166,14 +170,17 @@ def ensure_user(update: Update):
     db_user = get_user(user.id)
 
     if db_user:
-        # Keep username updated
-        if db_user.get("username") != (user.username or ""):
+        current_username = user.username or ""
+
+        if db_user.get("username") != current_username:
             update_user(
                 user.id,
-                {"username": user.username or ""},
+                {
+                    "username": current_username,
+                },
             )
 
-        return db_user
+        return get_user(user.id)
 
     return create_user(
         telegram_id=user.id,
@@ -202,7 +209,10 @@ async def is_member(
             "creator",
         ]
 
-    except Exception:
+    except Exception as e:
+        print(
+            f"Channel check failed for {channel}: {e}"
+        )
         return False
 
 
@@ -210,6 +220,9 @@ async def missing_channels(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
+    if not update.effective_user:
+        return REQUIRED_CHANNELS.copy()
+
     telegram_id = update.effective_user.id
 
     missing = []
@@ -233,7 +246,10 @@ def channel_keyboard():
             [
                 InlineKeyboardButton(
                     f"➕ Join {channel}",
-                    url=f"https://t.me/{channel.lstrip('@')}",
+                    url=(
+                        "https://t.me/"
+                        f"{channel.lstrip('@')}"
+                    ),
                 )
             ]
         )
@@ -276,11 +292,12 @@ async def require_channels(
                 reply_markup=channel_keyboard(),
             )
         except Exception:
-            await update.callback_query.message.reply_text(
-                text,
-                reply_markup=channel_keyboard(),
-            )
-    else:
+            if update.callback_query.message:
+                await update.callback_query.message.reply_text(
+                    text,
+                    reply_markup=channel_keyboard(),
+                )
+    elif update.message:
         await update.message.reply_text(
             text,
             reply_markup=channel_keyboard(),
@@ -305,8 +322,9 @@ async def start(
     existing = get_user(telegram_user.id)
 
     # -----------------------------------------------------
-    # New user
+    # Create new user
     # -----------------------------------------------------
+
     if not existing:
 
         referred_by = None
@@ -317,7 +335,10 @@ async def start(
             if ref_value.startswith("ref_"):
                 try:
                     referred_by = int(
-                        ref_value.replace("ref_", "")
+                        ref_value.replace(
+                            "ref_",
+                            "",
+                        )
                     )
                 except ValueError:
                     referred_by = None
@@ -326,7 +347,7 @@ async def start(
         if referred_by == telegram_user.id:
             referred_by = None
 
-        # Make sure referrer exists
+        # Referrer must already exist
         if referred_by:
             referrer = get_user(referred_by)
 
@@ -340,8 +361,9 @@ async def start(
         )
 
         # -------------------------------------------------
-        # Give referral reward immediately
+        # Immediate referral reward
         # -------------------------------------------------
+
         if existing and referred_by:
 
             referrer = get_user(referred_by)
@@ -349,34 +371,52 @@ async def start(
             if referrer:
 
                 old_balance = Decimal(
-                    str(referrer.get("balance") or 0)
+                    str(
+                        referrer.get(
+                            "balance"
+                        ) or 0
+                    )
                 )
 
                 old_balance_etb = Decimal(
-                    str(referrer.get("balance_etb") or 0)
+                    str(
+                        referrer.get(
+                            "balance_etb"
+                        ) or 0
+                    )
                 )
 
-                old_referral_count = int(
-                    referrer.get("referral_count") or 0
+                old_count = int(
+                    referrer.get(
+                        "referral_count"
+                    ) or 0
                 )
 
                 new_balance = (
-                    old_balance +
-                    REFERRAL_REWARD_USDT
+                    old_balance
+                    + REFERRAL_REWARD_USDT
                 )
 
                 new_balance_etb = (
-                    old_balance_etb +
-                    REFERRAL_REWARD_ETB
+                    old_balance_etb
+                    + REFERRAL_REWARD_ETB
                 )
 
                 update_user(
                     referred_by,
                     {
-                        "balance": float(new_balance),
-                        "balance_etb": float(new_balance_etb),
-                        "referral_count": old_referral_count + 1,
-                        "referrals": old_referral_count + 1,
+                        "balance": float(
+                            new_balance
+                        ),
+                        "balance_etb": float(
+                            new_balance_etb
+                        ),
+                        "referral_count": (
+                            old_count + 1
+                        ),
+                        "referrals": (
+                            old_count + 1
+                        ),
                     },
                 )
 
@@ -386,28 +426,35 @@ async def start(
                         text=(
                             "🎉 New Referral!\n\n"
                             "You received:\n"
-                            f"💵 {REFERRAL_REWARD_USDT:.3f} USDT\n"
-                            f"🇪🇹 {REFERRAL_REWARD_ETB:.3f} ETB\n\n"
-                            "💱 Rate: 1 USDT = 185 ETB"
+                            f"💵 "
+                            f"{REFERRAL_REWARD_USDT:.3f} "
+                            "USDT\n"
+                            f"🇪🇹 "
+                            f"{REFERRAL_REWARD_ETB:.3f} "
+                            "ETB\n\n"
+                            "💱 Rate: "
+                            "1 USDT = 185 ETB"
                         ),
                     )
                 except Exception:
                     pass
 
     # -----------------------------------------------------
-    # Check channels
+    # Channel verification
     # -----------------------------------------------------
 
-    if await require_channels(
+    if not await require_channels(
         update,
         context,
     ):
-        await update.message.reply_text(
-            "🎉 Welcome to Vortex Earn Bot!\n\n"
-            "Your account is ready.\n"
-            "Choose an option below.",
-            reply_markup=MAIN_MENU,
-        )
+        return
+
+    await update.message.reply_text(
+        "🎉 Welcome to Vortex Earn Bot!\n\n"
+        "Your account is ready.\n"
+        "Choose an option below.",
+        reply_markup=MAIN_MENU,
+    )
 
 
 # =========================================================
@@ -428,6 +475,7 @@ async def verify_channels(
     )
 
     if missing:
+
         missing_text = "\n".join(
             f"❌ {channel}"
             for channel in missing
@@ -443,10 +491,11 @@ async def verify_channels(
 
         return
 
-    # Mark user verified
     update_user(
         update.effective_user.id,
-        {"is_verified": True},
+        {
+            "is_verified": True,
+        },
     )
 
     await query.edit_message_text(
@@ -481,32 +530,42 @@ async def balance(
         return
 
     usdt = Decimal(
-        str(user.get("balance") or 0)
-    )
-
-    etb = Decimal(
-        str(user.get("balance_etb") or 0)
-    )
-
-    # Keep ETB synchronized with USDT
-    expected_etb = usdt * USDT_TO_ETB
-
-    if abs(etb - expected_etb) > Decimal("0.01"):
-        etb = expected_etb
-
-        update_user(
-            update.effective_user.id,
-            {
-                "balance_etb": float(etb),
-            },
+        str(
+            user.get("balance")
+            or 0
         )
+    )
+
+    expected_etb = (
+        usdt * USDT_TO_ETB
+    )
 
     await update.message.reply_text(
         "💰 Balance\n\n"
         f"🪙 USDT = {usdt:.6f} USDT\n"
-        f"🇪🇹 ETB = {etb:.2f} ETB\n\n"
+        f"🇪🇹 ETB = {expected_etb:.2f} ETB\n\n"
         "💱 Rate: 1 USDT = 185 ETB"
     )
+
+    current_etb = Decimal(
+        str(
+            user.get("balance_etb")
+            or 0
+        )
+    )
+
+    if abs(
+        current_etb - expected_etb
+    ) > Decimal("0.01"):
+
+        update_user(
+            update.effective_user.id,
+            {
+                "balance_etb": float(
+                    expected_etb
+                ),
+            },
+        )
 
 
 # =========================================================
@@ -531,23 +590,25 @@ async def referral(
     bot_info = await context.bot.get_me()
 
     referral_link = (
-        f"https://t.me/{bot_info.username}"
-        f"?start=ref_{update.effective_user.id}"
+        f"https://t.me/"
+        f"{bot_info.username}"
+        f"?start=ref_"
+        f"{update.effective_user.id}"
     )
 
     count = int(
-        user.get("referral_count") or
-        user.get("referrals") or
-        0
+        user.get("referral_count")
+        or user.get("referrals")
+        or 0
     )
 
     await update.message.reply_text(
         "👥 Referral Program\n\n"
         f"🔗 Your referral link:\n"
         f"{referral_link}\n\n"
-        f"💵 Reward per direct referral: "
+        "💵 Reward per direct referral: "
         f"{REFERRAL_REWARD_USDT:.3f} USDT\n"
-        f"🇪🇹 Equivalent: "
+        "🇪🇹 Equivalent: "
         f"{REFERRAL_REWARD_ETB:.3f} ETB\n\n"
         f"👤 Direct referrals: {count}\n\n"
         "💱 Rate: 1 USDT = 185 ETB\n\n"
@@ -559,7 +620,10 @@ async def referrals(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-    await referral(update, context)
+    await referral(
+        update,
+        context,
+    )
 
 
 # =========================================================
@@ -576,16 +640,73 @@ async def tasks(
     ):
         return
 
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "🔙 Back",
+                callback_data="tasks_back",
+            )
+        ]
+    ]
+
     await update.message.reply_text(
         "🎯 Tasks\n\n"
         "No tasks are available right now.\n\n"
-        "New earning tasks will appear here."
+        "New earning tasks will appear here.",
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        ),
+    )
+
+
+async def tasks_back(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    query = update.callback_query
+
+    await query.answer()
+
+    await query.message.reply_text(
+        "Choose an option below:",
+        reply_markup=MAIN_MENU,
     )
 
 
 # =========================================================
-# WALLET MAIN
+# WALLET MENU
 # =========================================================
+
+def wallet_menu_keyboard():
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "💵 USDT",
+                    callback_data="wallet_usdt",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🏦 CBE",
+                    callback_data="wallet_cbe",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📱 Telebirr",
+                    callback_data="wallet_telebirr",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔙 Back",
+                    callback_data="wallet_main_back",
+                )
+            ],
+        ]
+    )
+
 
 async def wallet(
     update: Update,
@@ -597,36 +718,50 @@ async def wallet(
     ):
         return
 
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "💵 USDT",
-                callback_data="wallet_usdt",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🏦 CBE",
-                callback_data="wallet_cbe",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "📱 Telebirr",
-                callback_data="wallet_telebirr",
-            )
-        ],
-    ]
+    context.user_data.clear()
 
     await update.message.reply_text(
         "👛 Wallet\n\n"
         "Choose your payment method:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        reply_markup=wallet_menu_keyboard(),
+    )
+
+
+async def wallet_main_back(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    query = update.callback_query
+
+    await query.answer()
+
+    context.user_data.clear()
+
+    await query.message.reply_text(
+        "Choose an option below:",
+        reply_markup=MAIN_MENU,
+    )
+
+
+async def wallet_back(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    query = update.callback_query
+
+    await query.answer()
+
+    context.user_data.clear()
+
+    await query.edit_message_text(
+        "👛 Wallet\n\n"
+        "Choose your payment method:",
+        reply_markup=wallet_menu_keyboard(),
     )
 
 
 # =========================================================
-# WALLET - USDT
+# WALLET USDT
 # =========================================================
 
 async def wallet_usdt(
@@ -661,12 +796,14 @@ async def wallet_usdt(
     await query.edit_message_text(
         "💵 USDT Wallet\n\n"
         "Choose your USDT payout method:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        ),
     )
 
 
 # =========================================================
-# WALLET - CBE
+# WALLET CBE
 # =========================================================
 
 async def wallet_cbe(
@@ -677,18 +814,33 @@ async def wallet_cbe(
 
     await query.answer()
 
-    context.user_data["wallet_state"] = "cbe_account"
+    context.user_data.clear()
+    context.user_data["wallet_state"] = (
+        "cbe_account"
+    )
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "🔙 Back",
+                callback_data="wallet_back",
+            )
+        ]
+    ]
 
     await query.edit_message_text(
         "🏦 CBE Wallet\n\n"
         "Send your CBE account number.\n\n"
         "Example:\n"
-        "1000123456789"
+        "1000123456789",
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        ),
     )
 
 
 # =========================================================
-# WALLET - TELEBIRR
+# WALLET TELEBIRR
 # =========================================================
 
 async def wallet_telebirr(
@@ -699,18 +851,33 @@ async def wallet_telebirr(
 
     await query.answer()
 
-    context.user_data["wallet_state"] = "telebirr_number"
+    context.user_data.clear()
+    context.user_data["wallet_state"] = (
+        "telebirr_number"
+    )
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "🔙 Back",
+                callback_data="wallet_back",
+            )
+        ]
+    ]
 
     await query.edit_message_text(
         "📱 Telebirr Wallet\n\n"
         "Send your Telebirr phone number.\n\n"
         "Example:\n"
-        "09XXXXXXXX"
+        "09XXXXXXXX",
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        ),
     )
 
 
 # =========================================================
-# WALLET - BYBIT
+# WALLET BYBIT
 # =========================================================
 
 async def wallet_bybit(
@@ -721,16 +888,31 @@ async def wallet_bybit(
 
     await query.answer()
 
-    context.user_data["wallet_state"] = "bybit"
+    context.user_data.clear()
+    context.user_data["wallet_state"] = (
+        "bybit"
+    )
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "🔙 Back",
+                callback_data="wallet_usdt",
+            )
+        ]
+    ]
 
     await query.edit_message_text(
         "🟢 Bybit UID / Account ID\n\n"
-        "Send your Bybit UID or Account ID."
+        "Send your Bybit UID or Account ID.",
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        ),
     )
 
 
 # =========================================================
-# WALLET - BEP20
+# WALLET BEP20
 # =========================================================
 
 async def wallet_bep20(
@@ -741,11 +923,26 @@ async def wallet_bep20(
 
     await query.answer()
 
-    context.user_data["wallet_state"] = "bep20"
+    context.user_data.clear()
+    context.user_data["wallet_state"] = (
+        "bep20"
+    )
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "🔙 Back",
+                callback_data="wallet_usdt",
+            )
+        ]
+    ]
 
     await query.edit_message_text(
         "🟢 BEP20 USDT Address\n\n"
-        "Send your BEP20 USDT wallet address."
+        "Send your BEP20 USDT wallet address.",
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        ),
     )
 
 
@@ -757,17 +954,39 @@ async def wallet_text_handler(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-    state = context.user_data.get("wallet_state")
+    state = context.user_data.get(
+        "wallet_state"
+    )
 
     if not state:
         return False
 
+    if not update.message:
+        return True
+
     text = update.message.text.strip()
+
+    # -----------------------------------------------------
+    # Text Back
+    # -----------------------------------------------------
+
+    if text == "🔙 Back":
+        context.user_data.clear()
+
+        await update.message.reply_text(
+            "👛 Wallet\n\n"
+            "Choose your payment method:",
+            reply_markup=wallet_menu_keyboard(),
+        )
+
+        return True
 
     if not text:
         return True
 
-    telegram_id = update.effective_user.id
+    telegram_id = (
+        update.effective_user.id
+    )
 
     # -----------------------------------------------------
     # Bybit
@@ -779,11 +998,12 @@ async def wallet_text_handler(
             telegram_id,
             {
                 "usdt_address": text,
-                "last_withdrawal_method": "Bybit UID / Account ID",
+                "last_withdrawal_method":
+                    "Bybit UID / Account ID",
             },
         )
 
-        context.user_data.pop("wallet_state", None)
+        context.user_data.clear()
 
         await update.message.reply_text(
             "✅ Bybit UID / Account ID saved successfully.",
@@ -802,11 +1022,12 @@ async def wallet_text_handler(
             telegram_id,
             {
                 "usdt_address": text,
-                "last_withdrawal_method": "BEP20",
+                "last_withdrawal_method":
+                    "BEP20",
             },
         )
 
-        context.user_data.pop("wallet_state", None)
+        context.user_data.clear()
 
         await update.message.reply_text(
             "✅ BEP20 USDT address saved successfully.",
@@ -821,12 +1042,29 @@ async def wallet_text_handler(
 
     if state == "cbe_account":
 
-        context.user_data["temp_cbe_account"] = text
-        context.user_data["wallet_state"] = "cbe_name"
+        context.user_data[
+            "temp_cbe_account"
+        ] = text
+
+        context.user_data[
+            "wallet_state"
+        ] = "cbe_name"
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "🔙 Back",
+                    callback_data="wallet_back",
+                )
+            ]
+        ]
 
         await update.message.reply_text(
-            "🏦 CBE Account Number saved.\n\n"
-            "Now send the account holder name."
+            "🏦 CBE Account Number received.\n\n"
+            "Now send the account holder name.",
+            reply_markup=InlineKeyboardMarkup(
+                keyboard
+            ),
         )
 
         return True
@@ -841,17 +1079,28 @@ async def wallet_text_handler(
             "temp_cbe_account"
         )
 
+        if not account:
+            context.user_data.clear()
+
+            await update.message.reply_text(
+                "❌ CBE wallet setup expired.\n\n"
+                "Please open 👛 Wallet again.",
+                reply_markup=MAIN_MENU,
+            )
+
+            return True
+
         update_user(
             telegram_id,
             {
                 "bank_name": text,
-                "bank_account": account or "",
-                "last_withdrawal_method": "CBE",
+                "bank_account": account,
+                "last_withdrawal_method":
+                    "CBE",
             },
         )
 
-        context.user_data.pop("temp_cbe_account", None)
-        context.user_data.pop("wallet_state", None)
+        context.user_data.clear()
 
         await update.message.reply_text(
             "✅ CBE wallet saved successfully.",
@@ -866,12 +1115,29 @@ async def wallet_text_handler(
 
     if state == "telebirr_number":
 
-        context.user_data["temp_telebirr_number"] = text
-        context.user_data["wallet_state"] = "telebirr_name"
+        context.user_data[
+            "temp_telebirr_number"
+        ] = text
+
+        context.user_data[
+            "wallet_state"
+        ] = "telebirr_name"
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "🔙 Back",
+                    callback_data="wallet_back",
+                )
+            ]
+        ]
 
         await update.message.reply_text(
-            "📱 Telebirr number saved.\n\n"
-            "Now send the account holder name."
+            "📱 Telebirr number received.\n\n"
+            "Now send the account holder name.",
+            reply_markup=InlineKeyboardMarkup(
+                keyboard
+            ),
         )
 
         return True
@@ -886,24 +1152,28 @@ async def wallet_text_handler(
             "temp_telebirr_number"
         )
 
+        if not number:
+            context.user_data.clear()
+
+            await update.message.reply_text(
+                "❌ Telebirr wallet setup expired.\n\n"
+                "Please open 👛 Wallet again.",
+                reply_markup=MAIN_MENU,
+            )
+
+            return True
+
         update_user(
             telegram_id,
             {
-                "telebirr_number": number or "",
+                "telebirr_number": number,
                 "bank_name": text,
-                "last_withdrawal_method": "Telebirr",
+                "last_withdrawal_method":
+                    "Telebirr",
             },
         )
 
-        context.user_data.pop(
-            "temp_telebirr_number",
-            None,
-        )
-
-        context.user_data.pop(
-            "wallet_state",
-            None,
-        )
+        context.user_data.clear()
 
         await update.message.reply_text(
             "✅ Telebirr wallet saved successfully.",
@@ -934,16 +1204,13 @@ async def withdraw(
     if not user:
         return
 
-    withdrawal_count = int(
-        user.get("withdrawal_count") or 0
+    minimum = get_minimum_withdrawal(
+        user
     )
 
-    if withdrawal_count < 2:
-        minimum = FIRST_MIN_WITHDRAW_USDT
-    else:
-        minimum = LATER_MIN_WITHDRAW_USDT
-
-    minimum_etb = minimum * USDT_TO_ETB
+    minimum_etb = (
+        minimum * USDT_TO_ETB
+    )
 
     keyboard = [
         [
@@ -964,26 +1231,51 @@ async def withdraw(
                 callback_data="withdraw_cbe",
             )
         ],
+        [
+            InlineKeyboardButton(
+                "🔙 Back",
+                callback_data="withdraw_back",
+            )
+        ],
     ]
 
     await update.message.reply_text(
         "💸 Withdraw\n\n"
         "Choose withdrawal method:\n\n"
-        f"Minimum withdrawal:\n"
+        "Minimum withdrawal:\n"
         f"💵 {minimum:.2f} USDT\n"
         f"🇪🇹 {minimum_etb:.2f} ETB\n\n"
         "💱 Rate: 1 USDT = 185 ETB",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        ),
+    )
+
+
+async def withdraw_back(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    query = update.callback_query
+
+    await query.answer()
+
+    context.user_data.clear()
+
+    await query.message.reply_text(
+        "Choose an option below:",
+        reply_markup=MAIN_MENU,
     )
 
 
 # =========================================================
-# WITHDRAW - GET MINIMUM
+# WITHDRAW MINIMUM
 # =========================================================
 
 def get_minimum_withdrawal(user):
     count = int(
-        user.get("withdrawal_count") or 0
+        user.get("withdrawal_count")
+        or 0
     )
 
     if count < 2:
@@ -993,7 +1285,7 @@ def get_minimum_withdrawal(user):
 
 
 # =========================================================
-# WITHDRAW METHOD CALLBACKS
+# WITHDRAW USDT
 # =========================================================
 
 async def withdraw_usdt(
@@ -1011,28 +1303,73 @@ async def withdraw_usdt(
     if not user:
         return
 
-    saved = user.get("usdt_address") or ""
+    saved = user.get(
+        "usdt_address"
+    ) or ""
 
     if not saved:
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "👛 Go to Wallet",
+                    callback_data="withdraw_wallet",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔙 Back",
+                    callback_data="withdraw_back",
+                )
+            ],
+        ]
+
         await query.edit_message_text(
             "❌ USDT wallet is not set.\n\n"
-            "Please open 👛 Wallet and add either:\n"
+            "Please add either:\n"
             "🟢 Bybit UID / Account ID\n"
             "or\n"
-            "🟢 BEP20 USDT Address"
+            "🟢 BEP20 USDT Address",
+            reply_markup=InlineKeyboardMarkup(
+                keyboard
+            ),
         )
+
         return
 
-    context.user_data["withdraw_method"] = "USDT"
-    context.user_data["withdraw_state"] = "amount"
+    context.user_data.clear()
+
+    context.user_data[
+        "withdraw_method"
+    ] = "USDT"
+
+    context.user_data[
+        "withdraw_state"
+    ] = "amount"
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "🔙 Back",
+                callback_data="withdraw_back",
+            )
+        ]
+    ]
 
     await query.edit_message_text(
         "💵 USDT Withdrawal\n\n"
         "Send the amount you want to withdraw in USDT.\n\n"
         "Example:\n"
-        "0.20"
+        "0.20",
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        ),
     )
 
+
+# =========================================================
+# WITHDRAW TELEBIRR
+# =========================================================
 
 async def withdraw_telebirr(
     update: Update,
@@ -1049,27 +1386,74 @@ async def withdraw_telebirr(
     if not user:
         return
 
-    number = user.get("telebirr_number") or ""
-    name = user.get("bank_name") or ""
+    number = user.get(
+        "telebirr_number"
+    ) or ""
+
+    name = user.get(
+        "bank_name"
+    ) or ""
 
     if not number or not name:
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "👛 Go to Wallet",
+                    callback_data="withdraw_wallet",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔙 Back",
+                    callback_data="withdraw_back",
+                )
+            ],
+        ]
+
         await query.edit_message_text(
             "❌ Telebirr wallet is not complete.\n\n"
-            "Please open 👛 Wallet → 📱 Telebirr "
-            "and save your number and name first."
+            "Please open Wallet → Telebirr\n"
+            "and save your number and name first.",
+            reply_markup=InlineKeyboardMarkup(
+                keyboard
+            ),
         )
+
         return
 
-    context.user_data["withdraw_method"] = "Telebirr"
-    context.user_data["withdraw_state"] = "amount"
+    context.user_data.clear()
+
+    context.user_data[
+        "withdraw_method"
+    ] = "Telebirr"
+
+    context.user_data[
+        "withdraw_state"
+    ] = "amount"
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "🔙 Back",
+                callback_data="withdraw_back",
+            )
+        ]
+    ]
 
     await query.edit_message_text(
         "📱 Telebirr Withdrawal\n\n"
         "Send the amount you want to withdraw in USDT.\n\n"
-        "The ETB equivalent will be calculated "
-        "at 1 USDT = 185 ETB."
+        "💱 Rate: 1 USDT = 185 ETB",
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        ),
     )
 
+
+# =========================================================
+# WITHDRAW CBE
+# =========================================================
 
 async def withdraw_cbe(
     update: Update,
@@ -1086,30 +1470,94 @@ async def withdraw_cbe(
     if not user:
         return
 
-    account = user.get("bank_account") or ""
-    name = user.get("bank_name") or ""
+    account = user.get(
+        "bank_account"
+    ) or ""
+
+    name = user.get(
+        "bank_name"
+    ) or ""
 
     if not account or not name:
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "👛 Go to Wallet",
+                    callback_data="withdraw_wallet",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔙 Back",
+                    callback_data="withdraw_back",
+                )
+            ],
+        ]
+
         await query.edit_message_text(
             "❌ CBE wallet is not complete.\n\n"
-            "Please open 👛 Wallet → 🏦 CBE "
-            "and save your account number and name first."
+            "Please open Wallet → CBE\n"
+            "and save your account number and name first.",
+            reply_markup=InlineKeyboardMarkup(
+                keyboard
+            ),
         )
+
         return
 
-    context.user_data["withdraw_method"] = "CBE"
-    context.user_data["withdraw_state"] = "amount"
+    context.user_data.clear()
+
+    context.user_data[
+        "withdraw_method"
+    ] = "CBE"
+
+    context.user_data[
+        "withdraw_state"
+    ] = "amount"
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "🔙 Back",
+                callback_data="withdraw_back",
+            )
+        ]
+    ]
 
     await query.edit_message_text(
         "🏦 CBE Withdrawal\n\n"
         "Send the amount you want to withdraw in USDT.\n\n"
-        "The ETB equivalent will be calculated "
-        "at 1 USDT = 185 ETB."
+        "💱 Rate: 1 USDT = 185 ETB",
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        ),
     )
 
 
 # =========================================================
-# WITHDRAW AMOUNT INPUT
+# WITHDRAW → WALLET
+# =========================================================
+
+async def withdraw_wallet(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    query = update.callback_query
+
+    await query.answer()
+
+    context.user_data.clear()
+
+    await query.edit_message_text(
+        "👛 Wallet\n\n"
+        "Choose your payment method:",
+        reply_markup=wallet_menu_keyboard(),
+    )
+
+
+# =========================================================
+# WITHDRAW AMOUNT
 # =========================================================
 
 async def process_withdraw_amount(
@@ -1123,7 +1571,28 @@ async def process_withdraw_amount(
     if state != "amount":
         return False
 
+    if not update.message:
+        return True
+
     text = update.message.text.strip()
+
+    # -----------------------------------------------------
+    # Back
+    # -----------------------------------------------------
+
+    if text == "🔙 Back":
+        context.user_data.clear()
+
+        await update.message.reply_text(
+            "Choose an option below:",
+            reply_markup=MAIN_MENU,
+        )
+
+        return True
+
+    # -----------------------------------------------------
+    # Parse amount
+    # -----------------------------------------------------
 
     try:
         amount = Decimal(text)
@@ -1152,37 +1621,51 @@ async def process_withdraw_amount(
         return True
 
     balance_usdt = Decimal(
-        str(user.get("balance") or 0)
+        str(
+            user.get("balance")
+            or 0
+        )
     )
 
-    minimum = get_minimum_withdrawal(user)
+    minimum = get_minimum_withdrawal(
+        user
+    )
 
     if amount < minimum:
+
         await update.message.reply_text(
             "❌ Amount is below the minimum.\n\n"
             f"Minimum: {minimum:.2f} USDT\n"
             f"🇪🇹 {minimum * USDT_TO_ETB:.2f} ETB"
         )
+
         return True
 
     if amount > balance_usdt:
+
         await update.message.reply_text(
             "❌ Insufficient balance.\n\n"
-            f"Your balance: {balance_usdt:.6f} USDT"
+            f"Your balance: "
+            f"{balance_usdt:.6f} USDT"
         )
+
         return True
 
     method = context.user_data.get(
         "withdraw_method"
     )
 
-    amount_etb = amount * USDT_TO_ETB
-
-    context.user_data["withdraw_amount"] = str(
-        amount
+    amount_etb = (
+        amount * USDT_TO_ETB
     )
 
-    context.user_data["withdraw_state"] = "confirm"
+    context.user_data[
+        "withdraw_amount"
+    ] = str(amount)
+
+    context.user_data[
+        "withdraw_state"
+    ] = "confirm"
 
     keyboard = [
         [
@@ -1194,7 +1677,13 @@ async def process_withdraw_amount(
                 "❌ Cancel",
                 callback_data="withdraw_cancel",
             ),
-        ]
+        ],
+        [
+            InlineKeyboardButton(
+                "🔙 Back",
+                callback_data="withdraw_back",
+            )
+        ],
     ]
 
     await update.message.reply_text(
@@ -1203,14 +1692,16 @@ async def process_withdraw_amount(
         f"🇪🇹 Value: {amount_etb:.2f} ETB\n"
         f"💳 Method: {method}\n\n"
         "Do you want to submit this withdrawal request?",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        ),
     )
 
     return True
 
 
 # =========================================================
-# GET PAYMENT DETAILS
+# PAYMENT DETAILS
 # =========================================================
 
 def get_payment_details(
@@ -1218,13 +1709,29 @@ def get_payment_details(
     method,
 ):
     if method == "USDT":
-        address = user.get("usdt_address") or ""
 
-        return f"USDT UID / Address: {address}"
+        address = user.get(
+            "usdt_address"
+        ) or ""
+
+        last_method = user.get(
+            "last_withdrawal_method"
+        ) or ""
+
+        return (
+            f"USDT UID / Address: {address}\n"
+            f"USDT Method: {last_method}"
+        )
 
     if method == "CBE":
-        account = user.get("bank_account") or ""
-        name = user.get("bank_name") or ""
+
+        account = user.get(
+            "bank_account"
+        ) or ""
+
+        name = user.get(
+            "bank_name"
+        ) or ""
 
         return (
             f"CBE Account: {account}\n"
@@ -1232,8 +1739,14 @@ def get_payment_details(
         )
 
     if method == "Telebirr":
-        number = user.get("telebirr_number") or ""
-        name = user.get("bank_name") or ""
+
+        number = user.get(
+            "telebirr_number"
+        ) or ""
+
+        name = user.get(
+            "bank_name"
+        ) or ""
 
         return (
             f"Telebirr Number: {number}\n"
@@ -1255,14 +1768,20 @@ async def withdraw_confirm(
 
     await query.answer()
 
-    telegram_id = update.effective_user.id
+    telegram_id = (
+        update.effective_user.id
+    )
 
-    user = get_user(telegram_id)
+    user = get_user(
+        telegram_id
+    )
 
     if not user:
+
         await query.edit_message_text(
             "❌ User account not found."
         )
+
         return
 
     amount_text = context.user_data.get(
@@ -1274,23 +1793,52 @@ async def withdraw_confirm(
     )
 
     if not amount_text or not method:
+
         await query.edit_message_text(
             "❌ Withdrawal session expired.\n\n"
             "Please start again."
         )
+
         return
 
-    amount = Decimal(amount_text)
+    try:
+        amount = Decimal(
+            amount_text
+        )
+    except Exception:
+
+        await query.edit_message_text(
+            "❌ Invalid withdrawal amount."
+        )
+
+        return
 
     current_balance = Decimal(
-        str(user.get("balance") or 0)
+        str(
+            user.get("balance")
+            or 0
+        )
     )
 
+    minimum = get_minimum_withdrawal(
+        user
+    )
+
+    if amount < minimum:
+
+        await query.edit_message_text(
+            "❌ Amount is below the minimum."
+        )
+
+        return
+
     if amount > current_balance:
+
         await query.edit_message_text(
             "❌ Your balance has changed.\n\n"
             "Insufficient balance."
         )
+
         return
 
     payment_details = get_payment_details(
@@ -1298,7 +1846,18 @@ async def withdraw_confirm(
         method,
     )
 
-    amount_etb = amount * USDT_TO_ETB
+    if not payment_details:
+
+        await query.edit_message_text(
+            "❌ Payment details are missing.\n\n"
+            "Please set your wallet first."
+        )
+
+        return
+
+    amount_etb = (
+        amount * USDT_TO_ETB
+    )
 
     request_data = {
         "user_id": telegram_id,
@@ -1309,37 +1868,41 @@ async def withdraw_confirm(
         "status": "pending",
     }
 
-    result = (
-        supabase
-        .table("withdrawal_requests")
-        .insert(request_data)
-        .execute()
-    )
+    try:
 
-    if not result.data:
+        result = (
+            supabase
+            .table("withdrawal_requests")
+            .insert(request_data)
+            .execute()
+        )
+
+    except Exception as e:
+
+        print(
+            "Withdrawal insert error:",
+            e,
+        )
+
         await query.edit_message_text(
             "❌ Failed to create withdrawal request.\n\n"
             "Please try again later."
         )
+
+        return
+
+    if not result.data:
+
+        await query.edit_message_text(
+            "❌ Failed to create withdrawal request.\n\n"
+            "Please try again later."
+        )
+
         return
 
     request_id = result.data[0]["id"]
 
-    # Clear withdrawal state
-    context.user_data.pop(
-        "withdraw_amount",
-        None,
-    )
-
-    context.user_data.pop(
-        "withdraw_method",
-        None,
-    )
-
-    context.user_data.pop(
-        "withdraw_state",
-        None,
-    )
+    context.user_data.clear()
 
     await query.edit_message_text(
         "✅ Withdrawal request submitted!\n\n"
@@ -1352,46 +1915,51 @@ async def withdraw_confirm(
     )
 
     # -----------------------------------------------------
-    # Notify admin
+    # ADMIN NOTIFICATION
     # -----------------------------------------------------
 
     if ADMIN_ID:
+
+        username_text = ""
+
+        if update.effective_user.username:
+            username_text = (
+                f"@{update.effective_user.username}"
+            )
 
         admin_text = (
             "🔔 NEW WITHDRAWAL REQUEST\n\n"
             f"🆔 Request: #{request_id}\n"
             f"👤 User ID: {telegram_id}\n"
-            f"👤 Username: "
-            f"@{user.username}"
-            if user.username
-            else
-            f"🔔 NEW WITHDRAWAL REQUEST\n\n"
-            f"🆔 Request: #{request_id}\n"
-            f"👤 User ID: {telegram_id}\n"
-        )
-
-        admin_text += (
-            f"\n💵 Amount: {amount:.6f} USDT"
-            f"\n🇪🇹 Value: {amount_etb:.2f} ETB"
-            f"\n💳 Method: {method}"
-            f"\n\n📌 Payment details:"
-            f"\n{payment_details}"
+            f"👤 Username: {username_text}\n\n"
+            f"💵 Amount: "
+            f"{amount:.6f} USDT\n"
+            f"🇪🇹 Value: "
+            f"{amount_etb:.2f} ETB\n"
+            f"💳 Method: {method}\n\n"
+            "📌 Payment details:\n"
+            f"{payment_details}"
         )
 
         keyboard = [
             [
                 InlineKeyboardButton(
                     "✅ Approve",
-                    callback_data=f"admin_approve_{request_id}",
+                    callback_data=(
+                        f"admin_approve_{request_id}"
+                    ),
                 ),
                 InlineKeyboardButton(
                     "❌ Reject",
-                    callback_data=f"admin_reject_{request_id}",
+                    callback_data=(
+                        f"admin_reject_{request_id}"
+                    ),
                 ),
             ]
         ]
 
         try:
+
             await context.bot.send_message(
                 chat_id=int(ADMIN_ID),
                 text=admin_text,
@@ -1399,7 +1967,9 @@ async def withdraw_confirm(
                     keyboard
                 ),
             )
+
         except Exception as e:
+
             print(
                 "Admin notification failed:",
                 e,
@@ -1418,23 +1988,15 @@ async def withdraw_cancel(
 
     await query.answer()
 
-    context.user_data.pop(
-        "withdraw_amount",
-        None,
-    )
-
-    context.user_data.pop(
-        "withdraw_method",
-        None,
-    )
-
-    context.user_data.pop(
-        "withdraw_state",
-        None,
-    )
+    context.user_data.clear()
 
     await query.edit_message_text(
         "❌ Withdrawal cancelled."
+    )
+
+    await query.message.reply_text(
+        "Choose an option below:",
+        reply_markup=MAIN_MENU,
     )
 
 
@@ -1448,24 +2010,37 @@ async def admin_approve(
 ):
     query = update.callback_query
 
-    await query.answer()
-
     if not ADMIN_ID:
+        await query.answer()
         return
 
-    if update.effective_user.id != int(ADMIN_ID):
+    if update.effective_user.id != int(
+        ADMIN_ID
+    ):
+
         await query.answer(
             "⛔ Not authorized.",
             show_alert=True,
         )
+
         return
 
-    request_id = int(
-        query.data.replace(
-            "admin_approve_",
-            "",
+    await query.answer()
+
+    try:
+        request_id = int(
+            query.data.replace(
+                "admin_approve_",
+                "",
+            )
         )
-    )
+    except ValueError:
+
+        await query.edit_message_text(
+            "❌ Invalid request ID."
+        )
+
+        return
 
     result = (
         supabase
@@ -1477,58 +2052,78 @@ async def admin_approve(
     )
 
     if not result.data:
+
         await query.edit_message_text(
             "❌ Withdrawal request not found."
         )
+
         return
 
     request = result.data[0]
 
     if request["status"] != "pending":
+
         await query.edit_message_text(
             "⚠️ This request has already been processed."
         )
+
         return
 
     telegram_id = int(
         request["user_id"]
     )
 
-    user = get_user(telegram_id)
+    user = get_user(
+        telegram_id
+    )
 
     if not user:
+
         await query.edit_message_text(
             "❌ User account not found."
         )
+
         return
 
     amount = Decimal(
-        str(request["amount_usdt"])
+        str(
+            request["amount_usdt"]
+        )
     )
 
     amount_etb = Decimal(
-        str(request["amount_etb"])
+        str(
+            request["amount_etb"]
+        )
     )
 
     current_balance = Decimal(
-        str(user.get("balance") or 0)
+        str(
+            user.get("balance")
+            or 0
+        )
     )
 
     if current_balance < amount:
+
         await query.edit_message_text(
             "❌ Cannot approve.\n\n"
             "User has insufficient balance."
         )
+
         return
 
-    new_balance = current_balance - amount
+    new_balance = (
+        current_balance - amount
+    )
 
     new_balance_etb = (
         new_balance * USDT_TO_ETB
     )
 
     old_count = int(
-        user.get("withdrawal_count") or 0
+        user.get("withdrawal_count")
+        or 0
     )
 
     old_total_usdt = Decimal(
@@ -1550,17 +2145,30 @@ async def admin_approve(
     update_user(
         telegram_id,
         {
-            "balance": float(new_balance),
-            "balance_etb": float(new_balance_etb),
-            "withdrawal_count": old_count + 1,
+            "balance": float(
+                new_balance
+            ),
+            "balance_etb": float(
+                new_balance_etb
+            ),
+            "withdrawal_count": (
+                old_count + 1
+            ),
             "total_withdrawn_usdt": float(
                 old_total_usdt + amount
             ),
             "total_withdrawn_etb": float(
                 old_total_etb + amount_etb
             ),
-            "last_withdrawal_method": request["method"],
+            "last_withdrawal_method":
+                request["method"],
         },
+    )
+
+    processed_at = (
+        datetime.now(
+            timezone.utc
+        ).isoformat()
     )
 
     (
@@ -1569,7 +2177,7 @@ async def admin_approve(
         .update(
             {
                 "status": "approved",
-                "processed_at": "now()",
+                "processed_at": processed_at,
             }
         )
         .eq("id", request_id)
@@ -1583,16 +2191,20 @@ async def admin_approve(
     )
 
     try:
+
         await context.bot.send_message(
             chat_id=telegram_id,
             text=(
                 "✅ Withdrawal Approved\n\n"
                 f"🆔 Request: #{request_id}\n"
-                f"💵 Amount: {amount:.6f} USDT\n"
-                f"🇪🇹 Value: {amount_etb:.2f} ETB\n\n"
+                f"💵 Amount: "
+                f"{amount:.6f} USDT\n"
+                f"🇪🇹 Value: "
+                f"{amount_etb:.2f} ETB\n\n"
                 "Your withdrawal has been approved."
             ),
         )
+
     except Exception:
         pass
 
@@ -1607,24 +2219,37 @@ async def admin_reject(
 ):
     query = update.callback_query
 
-    await query.answer()
-
     if not ADMIN_ID:
+        await query.answer()
         return
 
-    if update.effective_user.id != int(ADMIN_ID):
+    if update.effective_user.id != int(
+        ADMIN_ID
+    ):
+
         await query.answer(
             "⛔ Not authorized.",
             show_alert=True,
         )
+
         return
 
-    request_id = int(
-        query.data.replace(
-            "admin_reject_",
-            "",
+    await query.answer()
+
+    try:
+        request_id = int(
+            query.data.replace(
+                "admin_reject_",
+                "",
+            )
         )
-    )
+    except ValueError:
+
+        await query.edit_message_text(
+            "❌ Invalid request ID."
+        )
+
+        return
 
     result = (
         supabase
@@ -1636,18 +2261,28 @@ async def admin_reject(
     )
 
     if not result.data:
+
         await query.edit_message_text(
             "❌ Withdrawal request not found."
         )
+
         return
 
     request = result.data[0]
 
     if request["status"] != "pending":
+
         await query.edit_message_text(
             "⚠️ This request has already been processed."
         )
+
         return
+
+    processed_at = (
+        datetime.now(
+            timezone.utc
+        ).isoformat()
+    )
 
     (
         supabase
@@ -1655,7 +2290,7 @@ async def admin_reject(
         .update(
             {
                 "status": "rejected",
-                "processed_at": "now()",
+                "processed_at": processed_at,
             }
         )
         .eq("id", request_id)
@@ -1668,14 +2303,18 @@ async def admin_reject(
     )
 
     try:
+
         await context.bot.send_message(
-            chat_id=int(request["user_id"]),
+            chat_id=int(
+                request["user_id"]
+            ),
             text=(
                 "❌ Withdrawal Rejected\n\n"
                 f"🆔 Request: #{request_id}\n\n"
                 "Your balance was not deducted."
             ),
         )
+
     except Exception:
         pass
 
@@ -1688,9 +2327,35 @@ async def support(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "🔙 Back",
+                callback_data="support_back",
+            )
+        ]
+    ]
+
     await update.message.reply_text(
         "🆘 Support\n\n"
-        f"Contact support: {SUPPORT_USERNAME}"
+        f"Contact support: {SUPPORT_USERNAME}",
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        ),
+    )
+
+
+async def support_back(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    query = update.callback_query
+
+    await query.answer()
+
+    await query.message.reply_text(
+        "Choose an option below:",
+        reply_markup=MAIN_MENU,
     )
 
 
@@ -1702,39 +2367,66 @@ async def button_handler(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-    # Wallet input first
+    # Wallet text input
     if await wallet_text_handler(
         update,
         context,
     ):
         return
 
-    # Withdrawal input
+    # Withdrawal amount input
     if await process_withdraw_amount(
         update,
         context,
     ):
         return
 
+    if not update.message:
+        return
+
     text = update.message.text
 
     if text == "💰 Balance":
-        await balance(update, context)
+
+        await balance(
+            update,
+            context,
+        )
 
     elif text == "🎯 Tasks":
-        await tasks(update, context)
+
+        await tasks(
+            update,
+            context,
+        )
 
     elif text == "👥 Referral":
-        await referral(update, context)
+
+        await referral(
+            update,
+            context,
+        )
 
     elif text == "👛 Wallet":
-        await wallet(update, context)
+
+        await wallet(
+            update,
+            context,
+        )
 
     elif text == "💸 Withdraw":
-        await withdraw(update, context)
+
+        await withdraw(
+            update,
+            context,
+        )
 
     elif text == "🆘 Support":
-        await support(update, context)
+
+        await support(
+            update,
+            context,
+        )
 
 
 # =========================================================
@@ -1814,8 +2506,33 @@ def main():
     )
 
     # -----------------------------------------------------
-    # Wallet callbacks
+    # Tasks
     # -----------------------------------------------------
+
+    app.add_handler(
+        CallbackQueryHandler(
+            tasks_back,
+            pattern="^tasks_back$",
+        )
+    )
+
+    # -----------------------------------------------------
+    # Wallet
+    # -----------------------------------------------------
+
+    app.add_handler(
+        CallbackQueryHandler(
+            wallet_main_back,
+            pattern="^wallet_main_back$",
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            wallet_back,
+            pattern="^wallet_back$",
+        )
+    )
 
     app.add_handler(
         CallbackQueryHandler(
@@ -1852,62 +2569,21 @@ def main():
         )
     )
 
-# -----------------------------------------------------
-# Wallet back
-# -----------------------------------------------------
-
-async def wallet_back(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
-    query = update.callback_query
-
-    await query.answer()
-
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "💵 USDT",
-                callback_data="wallet_usdt",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🏦 CBE",
-                callback_data="wallet_cbe",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "📱 Telebirr",
-                callback_data="wallet_telebirr",
-            )
-        ],
-    ]
-
-    await query.edit_message_text(
-        "👛 Wallet\n\n"
-        "Choose your payment method:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
-
-
-# -----------------------------------------------------
-# main
-# -----------------------------------------------------
-
-def main():
-
-    app = Application.builder().token(TOKEN).build()
-
-    # -------------------------------------------------
-    # Handlers
-    # -------------------------------------------------
+    # -----------------------------------------------------
+    # Withdrawal
+    # -----------------------------------------------------
 
     app.add_handler(
         CallbackQueryHandler(
-            wallet_back,
-            pattern="^wallet_back$",
+            withdraw_back,
+            pattern="^withdraw_back$",
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            withdraw_wallet,
+            pattern="^withdraw_wallet$",
         )
     )
 
@@ -1946,6 +2622,10 @@ def main():
         )
     )
 
+    # -----------------------------------------------------
+    # Admin
+    # -----------------------------------------------------
+
     app.add_handler(
         CallbackQueryHandler(
             admin_approve,
@@ -1960,6 +2640,21 @@ def main():
         )
     )
 
+    # -----------------------------------------------------
+    # Support
+    # -----------------------------------------------------
+
+    app.add_handler(
+        CallbackQueryHandler(
+            support_back,
+            pattern="^support_back$",
+        )
+    )
+
+    # -----------------------------------------------------
+    # Text
+    # -----------------------------------------------------
+
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
@@ -1967,11 +2662,13 @@ def main():
         )
     )
 
-    print("Vortex Earn Bot is running...")
+    print(
+        "Vortex Earn Bot is running..."
+    )
 
-    # -------------------------------------------------
+    # -----------------------------------------------------
     # Render Webhook
-    # -------------------------------------------------
+    # -----------------------------------------------------
 
     app.run_webhook(
         listen="0.0.0.0",
@@ -1983,6 +2680,10 @@ def main():
         ),
     )
 
+
+# =========================================================
+# START APPLICATION
+# =========================================================
 
 if __name__ == "__main__":
     main()
