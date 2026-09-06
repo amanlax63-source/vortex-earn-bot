@@ -3881,25 +3881,31 @@ def main():
     )
 
     # -----------------------------------------------------
-    # RENDER WEBHOOK
+    # RENDER WEBHOOK / POLLING FALLBACK
     # -----------------------------------------------------
 
     webhook_url = (
         f"{RENDER_URL}/{TOKEN}"
     )
 
-    logger.info(
-        "Webhook URL: %s",
-        RENDER_URL,
-    )
+    if RENDER_URL and "onrender.com" in RENDER_URL:
+        logger.info(
+            "Webhook URL: %s",
+            RENDER_URL,
+        )
 
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=TOKEN,
-        webhook_url=webhook_url,
-        drop_pending_updates=True,
-    )
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=TOKEN,
+            webhook_url=webhook_url,
+            drop_pending_updates=True,
+        )
+    else:
+        logger.info("Running in Long Polling mode...")
+        application.run_polling(
+            drop_pending_updates=True
+        )
 
 
 # =========================================================
