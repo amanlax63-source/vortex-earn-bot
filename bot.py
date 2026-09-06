@@ -509,7 +509,34 @@ async def wallet(
         "Choose your payment method:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+async def wallet_usdt(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
 
+    await query.answer()
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "🟢 Bybit UID / Account ID",
+                callback_data="wallet_bybit"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🟢 BEP20 USDT Address",
+                callback_data="wallet_bep20"
+            )
+        ],
+    ]
+
+    await query.edit_message_text(
+        "💵 USDT Wallet\n\n"
+        "Choose your USDT payout method:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 # =========================
 # WITHDRAW
