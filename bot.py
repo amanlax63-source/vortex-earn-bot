@@ -660,7 +660,12 @@ def main():
             pattern="^verify_channels$"
         )
     )
-
+app.add_handler(
+    CallbackQueryHandler(
+        wallet_usdt,
+        pattern="^wallet_usdt$"
+    )
+)
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
