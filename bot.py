@@ -660,18 +660,21 @@ def main():
             pattern="^verify_channels$"
         )
     )
+    
 app.add_handler(
     CallbackQueryHandler(
         wallet_usdt,
         pattern="^wallet_usdt$"
     )
 )
+
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
             button_handler
         )
     )
+
     print("Vortex Earn Bot is running...")
 
     app.run_webhook(
