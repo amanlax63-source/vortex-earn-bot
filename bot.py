@@ -483,12 +483,31 @@ async def wallet(
     if not await require_channels(update, context):
         return
 
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "💵 USDT",
+                callback_data="wallet_usdt"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🏦 CBE",
+                callback_data="wallet_cbe"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "📱 Telebirr",
+                callback_data="wallet_telebirr"
+            )
+        ],
+    ]
+
     await update.message.reply_text(
         "👛 Wallet\n\n"
-        "Choose your wallet/payment method:\n\n"
-        "💵 USDT\n"
-        "📱 Telebirr\n"
-        "🏦 CBE"
+        "Choose your payment method:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 
