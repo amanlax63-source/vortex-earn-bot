@@ -11,6 +11,9 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+REF_USDT = 0.012
+REF_ETB = 2
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -22,12 +25,100 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         .execute()
     )
 
+    # New user
     if not existing.data:
+        referred_by = None
+
+        # Check referral link
+        if context.args:
+            ref_text = context.args[0]
+
+            if ref_text.startswith("ref_"):
+                try:
+                    referrer_id = int(ref_text.replace("ref_", ""))
+
+                    # Prevent self-referral
+                    if referrer_id != user.id:
+                        referrer = (
+                            supabase.table("users")
+                            .select("telegram_id")
+                            .eq("telegram_id", referrer_id)
+                            .execute()
+                        )
+
+                        if referrer.data:
+                            referred_by = referrer_id
+
+                except ValueError:
+                    pass
+
+        # Create user
         supabase.table("users").insert({
             "telegram_id": user.id,
             "username": user.username or "",
-            "balance": 0
+            "balance": 0,
+            "balance_etb": 0,
+            "referred_by": referred_by,
+            "referral_count": 0,
+            "currency": "USDT"
         }).execute()
+
+        # Give commission to referrer ONLY
+        if referred_by:
+            referrer_data = (
+                supabase.table("users")
+                .select("currency, balance, balance_etb, referral_count")
+                .eq("telegram_id", referred_by)
+                .execute()
+            )
+
+            if referrer_data.data:
+                ref = referrer_data.data[0]
+                currency = ref.get("currency") or "USDT"
+
+                if currency == "ETB":
+                    new_balance = float(ref.get("balance_etb") or 0) + REF_ETB
+
+                    supabase.table("users").update({
+                        "balance_etb": new_balance,
+                        "referral_count": (ref.get("referral_count") or 0) + 1
+                    }).eq("telegram_id", referred_by).execute()
+
+                    try:
+                        await context.bot.send_message(
+                            chat_id=referred_by,
+                            text=(
+                                "🎉 Referral Reward!\n\n"
+                                f"👤 New referral joined!\n"
+                                f"💰 +{REF_ETB} ETB\n\n"
+                                f"Your referral count: "
+                                f"{(ref.get('referral_count') or 0) + 1}"
+                            )
+                        )
+                    except Exception:
+                        pass
+
+                else:
+                    new_balance = float(ref.get("balance") or 0) + REF_USDT
+
+                    supabase.table("users").update({
+                        "balance": new_balance,
+                        "referral_count": (ref.get("referral_count") or 0) + 1
+                    }).eq("telegram_id", referred_by).execute()
+
+                    try:
+                        await context.bot.send_message(
+                            chat_id=referred_by,
+                            text=(
+                                "🎉 Referral Reward!\n\n"
+                                f"👤 New referral joined!\n"
+                                f"💰 +{REF_USDT} USDT\n\n"
+                                f"Your referral count: "
+                                f"{(ref.get('referral_count') or 0) + 1}"
+                            )
+                        )
+                    except Exception:
+                        pass
 
     await update.message.reply_text(
         "Welcome to Vortex Earn Bot! 🌪️💸\n\n"
@@ -47,16 +138,26 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     result = (
         supabase.table("users")
-        .select("balance")
+        .select("balance, balance_etb, currency")
         .eq("telegram_id", user_id)
         .execute()
     )
 
-    balance_value = result.data[0]["balance"] if result.data else 0
+    if not result.data:
+        await update.message.reply_text(
+            "Please use /start first."
+        )
+        return
+
+    data = result.data[0]
+
+    usdt = float(data.get("balance") or 0)
+    etb = float(data.get("balance_etb") or 0)
 
     await update.message.reply_text(
-        f"💰 Your Balance\n\n"
-        f"Balance: {balance_value} USDT"
+        "💰 Your Balance\n\n"
+        f"🪙 USDT: {usdt:.6f}\n"
+        f"🇪🇹 ETB: {etb:.2f}"
     )
 
 
@@ -67,16 +168,30 @@ async def referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
     link = f"https://t.me/{bot_username}?start=ref_{user_id}"
 
     await update.message.reply_text(
-        f"🔗 Your Referral Link:\n\n"
+        "🔗 Your Referral Link\n\n"
         f"{link}\n\n"
-        "Invite friends and earn rewards! 🚀"
+        "👥 Invite friends and earn commission!\n\n"
+        "🪙 USDT: 0.012 per referral\n"
+        "🇪🇹 ETB: 2 ETB per referral\n\n"
+        "⚠️ Only the person who invited the new user receives the commission."
     )
 
 
 async def referrals(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    result = (
+        supabase.table("users")
+        .select("referral_count")
+        .eq("telegram_id", user_id)
+        .execute()
+    )
+
+    count = result.data[0]["referral_count"] if result.data else 0
+
     await update.message.reply_text(
         "👥 Your Referrals\n\n"
-        "Total referrals: 0"
+        f"Total referrals: {count}"
     )
 
 
