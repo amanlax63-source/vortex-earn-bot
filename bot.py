@@ -3,6 +3,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 TOKEN = os.getenv("BOT_TOKEN")
+PORT = int(os.getenv("PORT", "10000"))
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -10,7 +11,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🚀 Welcome to Vortex Earn Bot!\n\n"
         "💰 Complete tasks and earn rewards.\n"
         "🔗 Invite friends and earn more!\n\n"
-        "Use the buttons below to get started."
+        "Use the commands below to get started."
     )
 
 
@@ -34,7 +35,9 @@ async def referrals(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("💳 Wallet\n\nNo wallet connected yet.")
+    await update.message.reply_text(
+        "💳 Wallet\n\nNo wallet connected yet."
+    )
 
 
 async def withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -63,7 +66,13 @@ def main():
     app.add_handler(CommandHandler("support", support))
 
     print("Vortex Earn Bot is running...")
-    app.run_polling()
+
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=TOKEN,
+        webhook_url=f"https://vortex-earn-bot.onrender.com/{TOKEN}",
+    )
 
 
 if __name__ == "__main__":
