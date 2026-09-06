@@ -672,7 +672,6 @@ app.add_handler(
             button_handler
         )
     )
-
     print("Vortex Earn Bot is running...")
 
     app.run_webhook(
@@ -684,7 +683,6 @@ app.add_handler(
             f"{TOKEN}"
         ),
     )
-
 
 if __name__ == "__main__":
     main()
