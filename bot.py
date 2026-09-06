@@ -1852,46 +1852,57 @@ def main():
         )
     )
 
-    # -----------------------------------------------------
-    # Wallet back
-    # -----------------------------------------------------
+# -----------------------------------------------------
+# Wallet back
+# -----------------------------------------------------
 
-    async def wallet_back(
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
-    ):
-        query = update.callback_query
+async def wallet_back(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    query = update.callback_query
 
-        await query.answer()
+    await query.answer()
 
-        keyboard = [
-            [
-                InlineKeyboardButton(
-                    "💵 USDT",
-                    callback_data="wallet_usdt",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🏦 CBE",
-                    callback_data="wallet_cbe",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "📱 Telebirr",
-                    callback_data="wallet_telebirr",
-                )
-            ],
-        ]
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "💵 USDT",
+                callback_data="wallet_usdt",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🏦 CBE",
+                callback_data="wallet_cbe",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "📱 Telebirr",
+                callback_data="wallet_telebirr",
+            )
+        ],
+    ]
 
-        await query.edit_message_text(
-            "👛 Wallet\n\n"
-            "Choose your payment method:",
-            reply_markup=InlineKeyboardMarkup(
-                keyboard
-            ),
-        )
+    await query.edit_message_text(
+        "👛 Wallet\n\n"
+        "Choose your payment method:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+# -----------------------------------------------------
+# main
+# -----------------------------------------------------
+
+def main():
+
+    app = Application.builder().token(TOKEN).build()
+
+    # -------------------------------------------------
+    # Handlers
+    # -------------------------------------------------
 
     app.add_handler(
         CallbackQueryHandler(
@@ -1899,10 +1910,6 @@ def main():
             pattern="^wallet_back$",
         )
     )
-
-    # -----------------------------------------------------
-    # Withdrawal callbacks
-    # -----------------------------------------------------
 
     app.add_handler(
         CallbackQueryHandler(
@@ -1939,10 +1946,6 @@ def main():
         )
     )
 
-    # -----------------------------------------------------
-    # Admin callbacks
-    # -----------------------------------------------------
-
     app.add_handler(
         CallbackQueryHandler(
             admin_approve,
@@ -1957,10 +1960,6 @@ def main():
         )
     )
 
-    # -----------------------------------------------------
-    # Text handler
-    # -----------------------------------------------------
-
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
@@ -1968,13 +1967,11 @@ def main():
         )
     )
 
-    print(
-        "Vortex Earn Bot is running..."
-    )
+    print("Vortex Earn Bot is running...")
 
-    # -----------------------------------------------------
+    # -------------------------------------------------
     # Render Webhook
-    # -----------------------------------------------------
+    # -------------------------------------------------
 
     app.run_webhook(
         listen="0.0.0.0",
@@ -1986,10 +1983,6 @@ def main():
         ),
     )
 
-
-# =========================================================
-# START APPLICATION
-# =========================================================
 
 if __name__ == "__main__":
     main()
