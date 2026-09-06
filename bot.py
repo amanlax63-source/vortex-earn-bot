@@ -1,22 +1,38 @@
 import os
-
 from telegram import Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    ContextTypes,
-)
+from telegram.ext import Application, CommandHandler, ContextTypes
+from supabase import create_client, Client
 
 TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", "10000"))
 
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+
+    existing = (
+        supabase.table("users")
+        .select("*")
+        .eq("telegram_id", user.id)
+        .execute()
+    )
+
+    if not existing.data:
+        supabase.table("users").insert({
+            "telegram_id": user.id,
+            "username": user.username or "",
+            "balance": 0
+        }).execute()
+
     await update.message.reply_text(
         "Welcome to Vortex Earn Bot! 🌪️💸\n\n"
         "Complete tasks and earn rewards.\n"
         "Invite friends and earn more! 🚀\n\n"
-        "Use the commands below to get started.\n\n"
         "/balance - Check your balance\n"
         "/referral - Get your referral link\n"
         "/referrals - Check your referrals\n"
@@ -27,9 +43,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    result = (
+        supabase.table("users")
+        .select("balance")
+        .eq("telegram_id", user_id)
+        .execute()
+    )
+
+    balance_value = result.data[0]["balance"] if result.data else 0
+
     await update.message.reply_text(
-        "💰 Your Balance\n\n"
-        "Balance: 0.00 USDT"
+        f"💰 Your Balance\n\n"
+        f"Balance: {balance_value} USDT"
     )
 
 
@@ -40,7 +67,7 @@ async def referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
     link = f"https://t.me/{bot_username}?start=ref_{user_id}"
 
     await update.message.reply_text(
-        "🔗 Your Referral Link:\n\n"
+        f"🔗 Your Referral Link:\n\n"
         f"{link}\n\n"
         "Invite friends and earn rewards! 🚀"
     )
@@ -63,7 +90,10 @@ async def wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "💸 Withdraw\n\n"
-        "Your balance is not enough to make a withdrawal."
+        "Choose your withdrawal method:\n\n"
+        "💵 USDT\n"
+        "📱 Telebirr (ETB)\n"
+        "🏦 CBE (ETB)"
     )
 
 
@@ -77,6 +107,9 @@ async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     if not TOKEN:
         raise ValueError("BOT_TOKEN environment variable is not set.")
+
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise ValueError("Supabase environment variables are not set.")
 
     app = Application.builder().token(TOKEN).build()
 
